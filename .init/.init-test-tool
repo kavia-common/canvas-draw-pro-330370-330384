@@ -1,0 +1,4 @@
+{
+    "command": "npm run test",
+    "working_directory": "/home/kavia/workspace/code-generation/canvas-draw-pro-330370-330384/drawing_tool_frontend"
+}
