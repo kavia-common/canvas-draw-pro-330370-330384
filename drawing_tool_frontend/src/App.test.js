@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 
@@ -10,6 +10,27 @@ function getToolbar() {
   return screen.getByRole("region", { name: /drawing tools/i });
 }
 
+function getBrushSizeSlider() {
+  // Unambiguous: the range input is labelled by the visible "Brush" <label>
+  return within(getToolbar()).getByRole("slider", { name: /^brush/i });
+}
+
+function getColorPicker() {
+  return within(getToolbar()).getByLabelText(/pick brush color/i);
+}
+
+function pointerDown(el, { pointerId = 1, clientX = 10, clientY = 10 } = {}) {
+  fireEvent.pointerDown(el, { pointerId, clientX, clientY });
+}
+
+function pointerMove(el, { pointerId = 1, clientX = 20, clientY = 20 } = {}) {
+  fireEvent.pointerMove(el, { pointerId, clientX, clientY });
+}
+
+function pointerUp(el, { pointerId = 1 } = {}) {
+  fireEvent.pointerUp(el, { pointerId });
+}
+
 describe("Canvas Draw Pro - UI and interactions", () => {
   test("renders header, toolbar, and canvas", () => {
     render(<App />);
@@ -18,9 +39,9 @@ describe("Canvas Draw Pro - UI and interactions", () => {
     expect(getToolbar()).toBeInTheDocument();
     expect(getCanvas()).toBeInTheDocument();
 
-    // Key controls exist
-    expect(within(getToolbar()).getByLabelText(/brush/i)).toBeInTheDocument();
-    expect(within(getToolbar()).getByLabelText(/pick brush color/i)).toBeInTheDocument();
+    // Key controls exist (use unambiguous queries)
+    expect(getBrushSizeSlider()).toBeInTheDocument();
+    expect(getColorPicker()).toBeInTheDocument();
     expect(within(getToolbar()).getByRole("button", { name: /eraser/i })).toBeInTheDocument();
     expect(within(getToolbar()).getByRole("button", { name: /undo/i })).toBeInTheDocument();
     expect(within(getToolbar()).getByRole("button", { name: /redo/i })).toBeInTheDocument();
@@ -33,7 +54,7 @@ describe("Canvas Draw Pro - UI and interactions", () => {
     render(<App />);
 
     const eraserButton = within(getToolbar()).getByRole("button", { name: /eraser/i });
-    const colorPicker = within(getToolbar()).getByLabelText(/pick brush color/i);
+    const colorPicker = getColorPicker();
 
     expect(eraserButton).toHaveAttribute("aria-pressed", "false");
     expect(colorPicker).not.toBeDisabled();
@@ -56,12 +77,11 @@ describe("Canvas Draw Pro - UI and interactions", () => {
     // The component captures the pointer; jsdom doesn't implement setPointerCapture, so mock it.
     canvas.setPointerCapture = jest.fn();
 
-    // Start drawing: pushes undo snapshot (toDataURL) and begins path
-    fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 10, clientY: 10 });
+    pointerDown(canvas, { pointerId: 1, clientX: 10, clientY: 10 });
+    expect(canvas.setPointerCapture).toHaveBeenCalledTimes(1);
     expect(canvas.setPointerCapture).toHaveBeenCalledWith(1);
 
-    // Move while drawing: should call beginPath/moveTo/lineTo/stroke
-    fireEvent.pointerMove(canvas, { clientX: 30, clientY: 30 });
+    pointerMove(canvas, { pointerId: 1, clientX: 30, clientY: 30 });
     expect(ctx.beginPath).toHaveBeenCalled();
     expect(ctx.moveTo).toHaveBeenCalled();
     expect(ctx.lineTo).toHaveBeenCalled();
@@ -69,12 +89,12 @@ describe("Canvas Draw Pro - UI and interactions", () => {
 
     // Stop drawing: further moves should not draw
     const prevStrokeCalls = ctx.stroke.mock.calls.length;
-    fireEvent.pointerUp(canvas);
-    fireEvent.pointerMove(canvas, { clientX: 60, clientY: 60 });
+    pointerUp(canvas, { pointerId: 1 });
+    pointerMove(canvas, { pointerId: 1, clientX: 60, clientY: 60 });
     expect(ctx.stroke.mock.calls.length).toBe(prevStrokeCalls);
   });
 
-  test("undo/redo button enablement changes after drawing, undo, redo", () => {
+  test("undo/redo button enablement changes after drawing, undo, redo", async () => {
     render(<App />);
 
     const canvas = getCanvas();
@@ -88,23 +108,23 @@ describe("Canvas Draw Pro - UI and interactions", () => {
     expect(redoButton).toBeDisabled();
 
     // Draw once => undo should become enabled, redo should remain disabled
-    fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 10, clientY: 10 });
-    fireEvent.pointerMove(canvas, { clientX: 20, clientY: 20 });
-    fireEvent.pointerUp(canvas);
+    pointerDown(canvas, { pointerId: 1, clientX: 10, clientY: 10 });
+    pointerMove(canvas, { pointerId: 1, clientX: 20, clientY: 20 });
+    pointerUp(canvas, { pointerId: 1 });
 
-    expect(undoButton).not.toBeDisabled();
+    await waitFor(() => expect(undoButton).not.toBeDisabled());
     expect(redoButton).toBeDisabled();
 
     // Undo => redo becomes enabled
     fireEvent.click(undoButton);
-    expect(redoButton).not.toBeDisabled();
+    await waitFor(() => expect(redoButton).not.toBeDisabled());
 
     // Redo => redo becomes disabled again (no further redo)
     fireEvent.click(redoButton);
-    expect(redoButton).toBeDisabled();
+    await waitFor(() => expect(redoButton).toBeDisabled());
   });
 
-  test("clear pushes an undo snapshot and clears redo history, enabling undo afterwards", () => {
+  test("clear pushes an undo snapshot and clears redo history, enabling undo afterwards", async () => {
     render(<App />);
 
     const canvas = getCanvas();
@@ -115,13 +135,15 @@ describe("Canvas Draw Pro - UI and interactions", () => {
 
     // Start with a drawing so redo behavior can be asserted later
     canvas.setPointerCapture = jest.fn();
-    fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 10, clientY: 10 });
-    fireEvent.pointerMove(canvas, { clientX: 20, clientY: 20 });
-    fireEvent.pointerUp(canvas);
+    pointerDown(canvas, { pointerId: 1, clientX: 10, clientY: 10 });
+    pointerMove(canvas, { pointerId: 1, clientX: 20, clientY: 20 });
+    pointerUp(canvas, { pointerId: 1 });
+
+    await waitFor(() => expect(undoButton).not.toBeDisabled());
 
     // Undo then redo should now be enabled after undo
     fireEvent.click(undoButton);
-    expect(redoButton).not.toBeDisabled();
+    await waitFor(() => expect(redoButton).not.toBeDisabled());
 
     // Clear should push undo snapshot and also clear redo history
     fireEvent.click(clearButton);
@@ -129,13 +151,17 @@ describe("Canvas Draw Pro - UI and interactions", () => {
     // Clear draws a white fillRect to wipe the canvas
     expect(ctx.fillRect).toHaveBeenCalled();
 
-    expect(undoButton).not.toBeDisabled();
-    expect(redoButton).toBeDisabled();
+    await waitFor(() => expect(undoButton).not.toBeDisabled());
+    await waitFor(() => expect(redoButton).toBeDisabled());
   });
 
   test("export creates a download link with PNG data URL and clicks it", async () => {
     const user = userEvent.setup();
     render(<App />);
+
+    const canvas = getCanvas();
+    // Most reliable: stub toDataURL on the actual element instance used by the component.
+    canvas.toDataURL = jest.fn(() => "data:image/png;base64,export-mock");
 
     const exportButton = within(getToolbar()).getByRole("button", { name: /export png/i });
 
@@ -161,7 +187,6 @@ describe("Canvas Draw Pro - UI and interactions", () => {
     expect(createdAnchors.length).toBe(1);
     const a = createdAnchors[0];
 
-    // jsdom will store href as absolute; just assert it contains our data URL
     expect(String(a.href)).toContain("data:image/png");
     expect(a.download).toBe("drawing.png");
     expect(clickSpy).toHaveBeenCalledTimes(1);
@@ -174,7 +199,7 @@ describe("Canvas Draw Pro - UI and interactions", () => {
     removeSpy.mockRestore();
   });
 
-  test("keyboard shortcuts: Ctrl/Cmd+Z triggers undo, Shift+Ctrl/Cmd+Z triggers redo", () => {
+  test("keyboard shortcuts: Ctrl/Cmd+Z triggers undo, Shift+Ctrl/Cmd+Z triggers redo", async () => {
     render(<App />);
 
     const canvas = getCanvas();
@@ -184,19 +209,19 @@ describe("Canvas Draw Pro - UI and interactions", () => {
     const redoButton = within(getToolbar()).getByRole("button", { name: /redo/i });
 
     // Create undo history
-    fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 10, clientY: 10 });
-    fireEvent.pointerMove(canvas, { clientX: 20, clientY: 20 });
-    fireEvent.pointerUp(canvas);
+    pointerDown(canvas, { pointerId: 1, clientX: 10, clientY: 10 });
+    pointerMove(canvas, { pointerId: 1, clientX: 20, clientY: 20 });
+    pointerUp(canvas, { pointerId: 1 });
 
-    expect(undoButton).not.toBeDisabled();
+    await waitFor(() => expect(undoButton).not.toBeDisabled());
     expect(redoButton).toBeDisabled();
 
     // Ctrl+Z => undo => redo enabled
     fireEvent.keyDown(window, { key: "z", ctrlKey: true });
-    expect(redoButton).not.toBeDisabled();
+    await waitFor(() => expect(redoButton).not.toBeDisabled());
 
     // Shift+Ctrl+Z => redo => redo disabled
     fireEvent.keyDown(window, { key: "z", ctrlKey: true, shiftKey: true });
-    expect(redoButton).toBeDisabled();
+    await waitFor(() => expect(redoButton).toBeDisabled());
   });
 });

@@ -123,4 +123,5 @@ beforeAll(() => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.useRealTimers();
 });
