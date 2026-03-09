@@ -359,8 +359,19 @@ function App() {
               role="img"
               aria-label="Drawing canvas"
               onPointerDown={(e) => {
-                // Capture pointer so drawing continues even if the pointer leaves the canvas
-                e.currentTarget.setPointerCapture(e.pointerId);
+                // Capture pointer so drawing continues even if the pointer leaves the canvas.
+                // In jsdom/tests, PointerEvent support can be partial and `pointerId` may be undefined.
+                // Guard to avoid throwing and to keep drawing/undo logic working in all environments.
+                const pointerId = e?.pointerId;
+                const canCapture =
+                  typeof e?.currentTarget?.setPointerCapture === "function" &&
+                  typeof pointerId === "number" &&
+                  Number.isFinite(pointerId);
+
+                if (canCapture) {
+                  e.currentTarget.setPointerCapture(pointerId);
+                }
+
                 startDrawing(e);
               }}
               onPointerMove={(e) => {
